@@ -1,40 +1,44 @@
-# Carousell "Rare Find" Bot 🕵️‍♂️
+# Carousell "Perfect Hunter" Bot 💎🕵️‍♂️
 
-Bot otomatis untuk memonitor barang-barang langka (vintage/archive fashion) di Carousell Indonesia menggunakan bahasa pemrograman Go.
+Bot otomatis profesional untuk memburu barang-barang "Super Rare" (vintage/archive fashion) di Carousell Indonesia menggunakan Go.
 
-## Fitur
-- **Bypass Cloudflare**: Menggunakan `chromedp` (headless browser) untuk menghindari deteksi bot.
-- **Dukungan Multi-Brand**: Memonitor ratusan brand sekaligus dari file `brand_list.txt`.
-- **Notifikasi Telegram**: Memberikan alert instan lengkap dengan harga, penjual, dan link produk.
-- **Anti-Spam**: Melakukan scan awal untuk menghindari notifikasi barang lama.
+## 🚀 Fitur Unggulan (Pro Version)
+- **Persistence (Database JSON)**: Bot mengingat barang yang sudah dilihat dalam file `seen_db.json`. Jika bot restart, tidak perlu scan ulang barang lama.
+- **Smart Filtering (Blacklist)**: Otomatis mengabaikan barang dengan judul `repro`, `bootleg`, `fake`, `custom`, dll.
+- **VPS Optimized**: Manajemen memori yang efisien (membuka/menutup browser per brand) dan anti-ban delay.
+- **Bypass Cloudflare**: Menggunakan headless browser engine terbaru untuk menembus proteksi bot.
+- **Telegram Alert Instan**: Notifikasi lengkap dengan Nama Brand, Harga, Penjual, dan Link.
 
-## Prasyarat
-- [Go](https://go.dev/dl/) (versi 1.19 atau lebih baru)
-- **Google Chrome** atau **Chromium** terinstal di sistem.
-- Bot Telegram (dapatkan Token dari [@BotFather](https://t.me/botfather)).
+## 🛠️ Prasyarat
+- **Go** (v1.19+)
+- **Google Chrome** atau **Chromium** (Wajib terinstal di sistem).
+- **Telegram Bot Token** & **Chat ID**.
 
-## Instalasi
-1. Clone repository ini.
+## 📥 Instalasi
+1. Clone repository.
 2. Install dependensi:
    ```bash
    go mod tidy
    ```
-3. Siapkan file daftar brand:
-   Buat file `brand_list.txt` dan masukkan nama brand dipisahkan dengan koma (contoh: `Undercover, Number (N)ine, Yohji Yamamoto`).
+3. Siapkan daftar brand di file `brand_list.txt` (pisahkan dengan koma).
 
-## Konfigurasi
-Buka `main.go` dan sesuaikan variabel berikut:
-- `tgToken`: Token API Bot Telegram Anda.
-- `chatID`: ID Chat/User Telegram Anda.
-- `time.Sleep`: Sesuaikan interval scan untuk menghindari rate limiting.
+## ⚙️ Konfigurasi (Environment Variables)
+Demi keamanan, bot tidak lagi menyimpan token di dalam kode. Set variabel berikut di terminal atau VPS Anda:
+```bash
+export TELEGRAM_TOKEN="your_bot_token_here"
+export TELEGRAM_CHAT_ID="your_chat_id_here"
+```
 
-## Penggunaan
-Jalankan bot dengan perintah:
+## 🏃 Cara Menjalankan
 ```bash
 go run main.go
 ```
 
-Bot akan melakukan "Initial Scan" terlebih dahulu untuk mendata barang lama, kemudian akan standby menunggu barang baru muncul.
+## 📁 Struktur Proyek
+- `main.go`: Mesin utama bot.
+- `brand_list.txt`: Daftar brand yang ingin dipantau.
+- `seen_db.json`: Database ID barang (otomatis dibuat oleh bot).
+- `.gitignore`: Memastikan file database dan binary tidak ter-push ke Git.
 
-## Disclaimer
-Proyek ini dibuat untuk tujuan pembelajaran. Penggunaan bot untuk scraping secara masif dapat melanggar Ketentuan Layanan (ToS) Carousell. Gunakan dengan bijak dan atur interval waktu yang wajar.
+## ⚠️ Disclaimer
+Gunakan dengan bijak. Atur interval `CycleDelay` dan `MinDelay` di `main.go` agar tidak terlalu agresif dan menyebabkan IP Anda terblokir oleh pihak marketplace.
