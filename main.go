@@ -26,11 +26,20 @@ type Listing struct {
 var (
 	seenListings = make(map[string]bool)
 	tgBot        *tgbotapi.BotAPI
-	chatID       int64 = 775545807
-	tgToken      = "8896705019:AAGgqW4gSilbBcWlNwk6Q3b8KzeNGCSNzso"
+	chatID       int64
+	tgToken      string
 )
 
 func initTelegram() {
+	tgToken = os.Getenv("TELEGRAM_TOKEN")
+	idStr := os.Getenv("TELEGRAM_CHAT_ID")
+
+	if tgToken == "" || idStr == "" {
+		log.Fatalf("Error: TELEGRAM_TOKEN or TELEGRAM_CHAT_ID environment variables not set")
+	}
+
+	fmt.Sscanf(idStr, "%d", &chatID)
+
 	var err error
 	tgBot, err = tgbotapi.NewBotAPI(tgToken)
 	if err != nil {
