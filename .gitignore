@@ -1,0 +1,28 @@
+# Binaries
+main
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test files
+test_network.go
+dump_html.go
+test_scroll.go
+test_tg.go
+test_brands.txt
+carousell.html
+scroll_output.txt
+cookies.txt
+
+# Logs
+*.log
+scroll_output.txt
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Go
+vendor/
