@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"fmt"
+	"html"
 	"log/slog"
 	"strings"
 
@@ -50,7 +51,12 @@ func (b *Bot) Notify(l scraper.Listing) error {
 			"<b>Seller:</b> %s\n"+
 			"<b>Time:</b> %s\n\n"+
 			"<a href=\"%s\">Open Listing</a>",
-		strings.ToUpper(l.Brand), l.Title, l.Price, l.Seller, l.Time, l.URL,
+		strings.ToUpper(html.EscapeString(l.Brand)),
+		html.EscapeString(l.Title),
+		html.EscapeString(l.Price),
+		html.EscapeString(l.Seller),
+		html.EscapeString(l.Time),
+		html.EscapeString(l.URL),
 	)
 
 	msg := tgbotapi.NewMessage(b.chatID, msgText)

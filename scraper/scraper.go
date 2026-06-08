@@ -142,8 +142,8 @@ func (s *Scraper) Fetch(ctx context.Context, brand string) ([]Listing, error) {
 				ID:     id,
 				Title:  title,
 				Price:  price,
-				Seller: "Unknown",
-				Time:   "Recent",
+				Seller: "Unknown", // TODO: extract from HTML when markup is understood
+				Time:   "Recent",  // TODO: extract from HTML when markup is understood
 				URL:    "https://id.carousell.com" + link,
 				Brand:  brand,
 			})

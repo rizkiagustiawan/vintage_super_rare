@@ -6,21 +6,25 @@ import (
 	"time"
 )
 
-func TestLoad_DefaultValues(t *testing.T) {
-	// Clear all env vars
-	os.Unsetenv("TELEGRAM_TOKEN")
-	os.Unsetenv("TELEGRAM_CHAT_ID")
-	os.Unsetenv("WORKERS")
-	os.Unsetenv("MIN_DELAY")
-	os.Unsetenv("CYCLE_DELAY")
-	os.Unsetenv("PAGE_TIMEOUT")
-	os.Unsetenv("BRAND_FILE")
-	os.Unsetenv("DATABASE_FILE")
-	os.Unsetenv("BLACKLIST")
+func unsetAll(t *testing.T) {
+	t.Helper()
+	vars := []string{
+		"TELEGRAM_TOKEN", "TELEGRAM_CHAT_ID", "WORKERS", "MIN_DELAY",
+		"CYCLE_DELAY", "PAGE_TIMEOUT", "BRAND_FILE", "DATABASE_FILE", "BLACKLIST",
+	}
+	for _, v := range vars {
+		old, wasSet := os.LookupEnv(v)
+		os.Unsetenv(v)
+		if wasSet {
+			t.Cleanup(func() { os.Setenv(v, old) })
+		}
+	}
+}
 
-	// Set required vars
-	os.Setenv("TELEGRAM_CHAT_ID", "123456789")
-	defer os.Unsetenv("TELEGRAM_CHAT_ID")
+func TestLoad_DefaultValues(t *testing.T) {
+	unsetAll(t)
+
+	t.Setenv("TELEGRAM_CHAT_ID", "123456789")
 
 	cfg, err := Load()
 	if err != nil {
@@ -51,16 +55,12 @@ func TestLoad_DefaultValues(t *testing.T) {
 }
 
 func TestLoad_CustomValues(t *testing.T) {
-	os.Setenv("TELEGRAM_TOKEN", "test-token")
-	os.Setenv("TELEGRAM_CHAT_ID", "987654321")
-	os.Setenv("WORKERS", "3")
-	os.Setenv("MIN_DELAY", "5s")
-	defer func() {
-		os.Unsetenv("TELEGRAM_TOKEN")
-		os.Unsetenv("TELEGRAM_CHAT_ID")
-		os.Unsetenv("WORKERS")
-		os.Unsetenv("MIN_DELAY")
-	}()
+	unsetAll(t)
+
+	t.Setenv("TELEGRAM_TOKEN", "test-token")
+	t.Setenv("TELEGRAM_CHAT_ID", "987654321")
+	t.Setenv("WORKERS", "3")
+	t.Setenv("MIN_DELAY", "5s")
 
 	cfg, err := Load()
 	if err != nil {
@@ -79,7 +79,7 @@ func TestLoad_CustomValues(t *testing.T) {
 }
 
 func TestLoad_MissingChatID(t *testing.T) {
-	os.Unsetenv("TELEGRAM_CHAT_ID")
+	unsetAll(t)
 
 	_, err := Load()
 	if err == nil {
