@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -69,6 +70,7 @@ func main() {
 	)
 
 	for {
+		runCycle(ctx, sc, db, tg, brands, cfg, logger)
 		select {
 		case <-ctx.Done():
 			logger.Info("shutting down gracefully...")
@@ -76,9 +78,7 @@ func main() {
 				logger.Error("failed to save database on shutdown", slog.String("error", err.Error()))
 			}
 			return
-		default:
-			runCycle(ctx, sc, db, tg, brands, cfg, logger)
-			time.Sleep(cfg.CycleDelay)
+		case <-time.After(cfg.CycleDelay):
 		}
 	}
 }
@@ -87,12 +87,13 @@ func runCycle(ctx context.Context, sc *scraper.Scraper, db *database.Database, t
 	brandChan := make(chan string, len(brands))
 	resultChan := make(chan int, len(brands))
 
+	var needsSave atomic.Bool
 	var wg sync.WaitGroup
 	for i := 1; i <= cfg.Workers; i++ {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
-			worker(ctx, workerID, sc, db, tg, brandChan, resultChan, cfg, logger)
+			worker(ctx, workerID, sc, db, tg, brandChan, resultChan, &needsSave, cfg, logger)
 		}(i)
 	}
 
@@ -104,6 +105,12 @@ func runCycle(ctx context.Context, sc *scraper.Scraper, db *database.Database, t
 	wg.Wait()
 	close(resultChan)
 
+	if needsSave.Load() {
+		if err := db.Save(); err != nil {
+			logger.Error("failed to save database", slog.String("error", err.Error()))
+		}
+	}
+
 	totalNew := 0
 	for n := range resultChan {
 		totalNew += n
@@ -112,7 +119,7 @@ func runCycle(ctx context.Context, sc *scraper.Scraper, db *database.Database, t
 	logger.Info("cycle complete", slog.Int("new_items", totalNew))
 }
 
-func worker(ctx context.Context, id int, sc *scraper.Scraper, db *database.Database, tg *telegram.Bot, brands <-chan string, results chan<- int, cfg *config.Config, logger *slog.Logger) {
+func worker(ctx context.Context, id int, sc *scraper.Scraper, db *database.Database, tg *telegram.Bot, brands <-chan string, results chan<- int, needsSave *atomic.Bool, cfg *config.Config, logger *slog.Logger) {
 	for brand := range brands {
 		logger.Info("scanning brand", slog.Int("worker", id), slog.String("brand", brand))
 
@@ -127,7 +134,7 @@ func worker(ctx context.Context, id int, sc *scraper.Scraper, db *database.Datab
 		b := backoff.NewExponentialBackOff()
 		b.MaxElapsedTime = 30 * time.Second
 
-		if err := backoff.Retry(operation, backoff.WithMaxRetries(b, 2)); err != nil {
+		if err := backoff.Retry(operation, backoff.WithContext(backoff.WithMaxRetries(b, 2), ctx)); err != nil {
 			logger.Error("failed to fetch brand",
 				slog.Int("worker", id),
 				slog.String("brand", brand),
@@ -156,9 +163,7 @@ func worker(ctx context.Context, id int, sc *scraper.Scraper, db *database.Datab
 		}
 
 		if newFound > 0 {
-			if err := db.Save(); err != nil {
-				logger.Error("failed to save database", slog.String("error", err.Error()))
-			}
+			needsSave.Store(true)
 		}
 
 		logger.Info("brand scan complete",
