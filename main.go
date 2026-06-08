@@ -2,253 +2,193 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"log"
+	"log/slog"
 	"os"
-	"strconv"
+	"os/signal"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
-	"github.com/PuerkitoBio/goquery"
+	"carousell-bot/config"
+	"carousell-bot/database"
+	"carousell-bot/scraper"
+	"carousell-bot/telegram"
+
+	"github.com/cenkalti/backoff/v4"
 	"github.com/chromedp/chromedp"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-// --- CONFIGURATION & TYPES ---
+func main() {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
 
-type Listing struct {
-	ID     string `json:"id"`
-	Title  string `json:"title"`
-	Price  string `json:"price"`
-	Seller string `json:"seller"`
-	Time   string `json:"time"`
-	URL    string `json:"url"`
-	Brand  string `json:"brand"`
-}
-
-type Config struct {
-	TelegramToken  string
-	TelegramChatID int64
-	BrandFile      string
-	DatabaseFile   string
-	Blacklist      []string
-	MinDelay       time.Duration
-	CycleDelay     time.Duration
-}
-
-var (
-	seenListings = make(map[string]bool)
-	tgBot        *tgbotapi.BotAPI
-	config       Config
-)
-
-// --- DATABASE LOGIC (PERSISTENCE) ---
-
-func loadDatabase() {
-	if _, err := os.Stat(config.DatabaseFile); os.IsNotExist(err) {
-		return
-	}
-	data, err := os.ReadFile(config.DatabaseFile)
+	cfg, err := config.Load()
 	if err != nil {
-		log.Printf("Warning: Could not read database: %v", err)
-		return
-	}
-	var saved []string
-	json.Unmarshal(data, &saved)
-	for _, id := range saved {
-		seenListings[id] = true
-	}
-	log.Printf("Loaded %d items from database.", len(seenListings))
-}
-
-func saveDatabase() {
-	var ids []string
-	for id := range seenListings {
-		ids = append(ids, id)
-	}
-	data, _ := json.Marshal(ids)
-	os.WriteFile(config.DatabaseFile, data, 0644)
-}
-
-// --- TELEGRAM LOGIC ---
-
-func initTelegram() {
-	config.TelegramToken = os.Getenv("TELEGRAM_TOKEN")
-	idStr := os.Getenv("TELEGRAM_CHAT_ID")
-
-	if config.TelegramToken == "" || idStr == "" {
-		log.Fatalf("Critical: TELEGRAM_TOKEN or TELEGRAM_CHAT_ID not set")
+		logger.Error("failed to load config", slog.String("error", err.Error()))
+		os.Exit(1)
 	}
 
-	fmt.Sscanf(idStr, "%d", &config.TelegramChatID)
-
-	var err error
-	tgBot, err = tgbotapi.NewBotAPI(config.TelegramToken)
+	db, err := database.New(cfg.DatabaseFile, logger)
 	if err != nil {
-		log.Fatalf("Failed to init Telegram: %v", err)
+		logger.Error("failed to initialize database", slog.String("error", err.Error()))
+		os.Exit(1)
 	}
-	log.Printf("Authorized on account %s", tgBot.Self.UserName)
-}
 
-func notify(l Listing) {
-	msgText := fmt.Sprintf(
-		"💎 *PERFECT FIND: %s*\n\n"+
-			"🏷️ *Title:* %s\n"+
-			"💰 *Price:* %s\n"+
-			"👤 *Seller:* %s\n"+
-			"🕒 *Time:* %s\n\n"+
-			"🔗 [Open Listing](%s)",
-		strings.ToUpper(l.Brand), l.Title, l.Price, l.Seller, l.Time, l.URL,
-	)
-
-	msg := tgbotapi.NewMessage(config.TelegramChatID, msgText)
-	msg.ParseMode = "Markdown"
-	_, err := tgBot.Send(msg)
+	tg, err := telegram.New(cfg.TelegramToken, cfg.TelegramChatID, logger)
 	if err != nil {
-		log.Printf("Telegram Error: %v", err)
+		logger.Error("failed to initialize telegram", slog.String("error", err.Error()))
+		os.Exit(1)
 	}
-}
 
-// --- SCRAPER LOGIC ---
-
-func isBlacklisted(title string) bool {
-	t := strings.ToLower(title)
-	for _, word := range config.Blacklist {
-		if strings.Contains(t, word) {
-			return true
-		}
+	brands, err := loadBrands(cfg.BrandFile)
+	if err != nil {
+		logger.Error("failed to load brands", slog.String("error", err.Error()))
+		os.Exit(1)
 	}
-	return false
-}
 
-func fetchListings(query string) ([]Listing, error) {
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.Flag("headless", true),
 		chromedp.Flag("disable-gpu", true),
 		chromedp.Flag("no-sandbox", true),
-		chromedp.UserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
+		chromedp.Flag("disable-dev-shm-usage", true),
+		chromedp.UserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
 	)
-	
-	allocCtx, cancel := chromedp.NewExecAllocator(context.Background(), opts...)
-	defer cancel()
+	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), opts...)
+	defer allocCancel()
 
-	ctx, cancel := chromedp.NewContext(allocCtx)
-	defer cancel()
+	sc := scraper.New(allocCtx, logger, cfg.Blacklist, cfg.PageTimeout)
 
-	ctx, cancel = context.WithTimeout(ctx, 40*time.Second)
-	defer cancel()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
-	var html string
-	url := fmt.Sprintf("https://id.carousell.com/search/%s/?sort_by=3", query)
-
-	err := chromedp.Run(ctx,
-		chromedp.Navigate(url),
-		chromedp.Sleep(4*time.Second),
-		chromedp.OuterHTML("html", &html),
+	logger.Info("starting carousell bot",
+		slog.Int("workers", cfg.Workers),
+		slog.Int("brands", len(brands)),
 	)
-	if err != nil {
-		return nil, err
-	}
-
-	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
-	if err != nil {
-		return nil, err
-	}
-
-	var listings []Listing
-	doc.Find("div.D_aih").Each(func(i int, s *goquery.Selection) {
-		title := strings.TrimSpace(s.Find("p.D_ait").Text())
-		
-		// Perfect Filter: Blacklist check
-		if isBlacklisted(title) {
-			return
-		}
-
-		price := strings.TrimSpace(s.Find("p.D_aiu").Text())
-		seller := strings.TrimSpace(s.Find("p.D_aio").Text())
-		timeStr := strings.TrimSpace(s.Find("p.D_aiy").Text())
-		link, _ := s.Find("a.D_aik").Attr("href")
-
-		if title != "" && price != "" && link != "" {
-			parts := strings.Split(strings.Trim(link, "/"), "-")
-			id := parts[len(parts)-1]
-
-			listings = append(listings, Listing{
-				ID:     id,
-				Title:  title,
-				Price:  price,
-				Seller: seller,
-				Time:   timeStr,
-				URL:    "https://id.carousell.com" + link,
-				Brand:  query,
-			})
-		}
-	})
-
-	return listings, nil
-}
-
-// --- MAIN ENGINE ---
-
-func main() {
-	config = Config{
-		BrandFile:    "brand_list.txt",
-		DatabaseFile: "seen_db.json",
-		Blacklist:    []string{"repro", "bootleg", "kaos gambar", "custom", "premium high", "fake"},
-		MinDelay:     7 * time.Second,  // Delay between brands
-		CycleDelay:   10 * time.Minute, // Delay between full cycles
-	}
-
-	initTelegram()
-	loadDatabase()
-
-	content, err := os.ReadFile(config.BrandFile)
-	if err != nil {
-		log.Fatalf("Failed to read brand list: %v", err)
-	}
-	brands := strings.Split(string(content), ",")
-
-	log.Printf("Starting Perfect Hunter. Brands: %d", len(brands))
 
 	for {
-		newFoundInCycle := 0
-		for _, b := range brands {
-			brand := strings.TrimSpace(b)
-			if brand == "" {
-				continue
+		select {
+		case <-ctx.Done():
+			logger.Info("shutting down gracefully...")
+			if err := db.Save(); err != nil {
+				logger.Error("failed to save database on shutdown", slog.String("error", err.Error()))
 			}
+			return
+		default:
+			runCycle(ctx, sc, db, tg, brands, cfg, logger)
+			time.Sleep(cfg.CycleDelay)
+		}
+	}
+}
 
-			log.Printf("🔍 Scanning: %s", brand)
-			listings, err := fetchListings(brand)
-			if err != nil {
-				log.Printf("❌ Error [%s]: %v", brand, err)
-				continue
-			}
+func runCycle(ctx context.Context, sc *scraper.Scraper, db *database.Database, tg *telegram.Bot, brands []string, cfg *config.Config, logger *slog.Logger) {
+	brandChan := make(chan string, len(brands))
+	resultChan := make(chan int, len(brands))
 
-			for _, l := range listings {
-				if !seenListings[l.ID] {
-					log.Printf("🎯 FOUND: %s", l.Title)
-					
-					// Only notify if we already have a database (don't spam on first ever run)
-					if len(seenListings) > 0 {
-						notify(l)
-					}
-					
-					seenListings[l.ID] = true
-					newFoundInCycle++
-				}
-			}
-			
-			// Save after each brand to be safe
-			if newFoundInCycle > 0 {
-				saveDatabase()
-			}
-			
-			time.Sleep(config.MinDelay)
+	var wg sync.WaitGroup
+	for i := 1; i <= cfg.Workers; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			worker(ctx, workerID, sc, db, tg, brandChan, resultChan, cfg, logger)
+		}(i)
+	}
+
+	for _, b := range brands {
+		brandChan <- b
+	}
+	close(brandChan)
+
+	wg.Wait()
+	close(resultChan)
+
+	totalNew := 0
+	for n := range resultChan {
+		totalNew += n
+	}
+
+	logger.Info("cycle complete", slog.Int("new_items", totalNew))
+}
+
+func worker(ctx context.Context, id int, sc *scraper.Scraper, db *database.Database, tg *telegram.Bot, brands <-chan string, results chan<- int, cfg *config.Config, logger *slog.Logger) {
+	for brand := range brands {
+		logger.Info("scanning brand", slog.Int("worker", id), slog.String("brand", brand))
+
+		var listings []scraper.Listing
+		var err error
+
+		operation := func() error {
+			listings, err = sc.Fetch(ctx, brand)
+			return err
 		}
 
-		log.Printf("✅ Cycle complete. Found %d new items. Sleeping %v...", newFoundInCycle, config.CycleDelay)
-		time.Sleep(config.CycleDelay)
+		b := backoff.NewExponentialBackOff()
+		b.MaxElapsedTime = 30 * time.Second
+
+		if err := backoff.Retry(operation, backoff.WithMaxRetries(b, 2)); err != nil {
+			logger.Error("failed to fetch brand",
+				slog.Int("worker", id),
+				slog.String("brand", brand),
+				slog.String("error", err.Error()),
+			)
+			results <- 0
+			continue
+		}
+
+		newFound := 0
+		for _, l := range listings {
+			if db.IsNew(l.ID) {
+				logger.Info("found new listing",
+					slog.Int("worker", id),
+					slog.String("title", l.Title),
+					slog.String("price", l.Price),
+				)
+				if err := tg.Notify(l); err != nil {
+					logger.Error("failed to send notification",
+						slog.String("error", err.Error()),
+					)
+				}
+				db.MarkSeen(l.ID)
+				newFound++
+			}
+		}
+
+		if newFound > 0 {
+			if err := db.Save(); err != nil {
+				logger.Error("failed to save database", slog.String("error", err.Error()))
+			}
+		}
+
+		logger.Info("brand scan complete",
+			slog.Int("worker", id),
+			slog.String("brand", brand),
+			slog.Int("new", newFound),
+		)
+
+		results <- newFound
+		time.Sleep(cfg.MinDelay)
 	}
+}
+
+func loadBrands(filePath string) ([]string, error) {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	var brands []string
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		parts := strings.Split(line, ",")
+		for _, part := range parts {
+			trimmed := strings.TrimSpace(part)
+			if trimmed != "" {
+				brands = append(brands, trimmed)
+			}
+		}
+	}
+
+	return brands, nil
 }
