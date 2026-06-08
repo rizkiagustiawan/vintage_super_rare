@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"time"
 
@@ -53,7 +54,8 @@ func (s *Scraper) Close() {
 }
 
 func (s *Scraper) Fetch(ctx context.Context, brand string) ([]Listing, error) {
-	url := fmt.Sprintf("https://id.carousell.com/search/%s/?sort_by=3", brand)
+	encodedBrand := url.PathEscape(brand)
+	url := fmt.Sprintf("https://id.carousell.com/search/%s/?sort_by=3", encodedBrand)
 
 	resp, err := s.httpClient.Get(ctx, url, map[string][]string{
 		"Accept":          {"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"},
@@ -81,22 +83,25 @@ func (s *Scraper) Fetch(ctx context.Context, brand string) ([]Listing, error) {
 	var listings []Listing
 	seenInPage := make(map[string]bool)
 
+	linksFound := 0
 	doc.Find("a[href*='/p/']").Each(func(i int, sel *goquery.Selection) {
 		link, exists := sel.Attr("href")
 		if !exists {
 			return
 		}
+		linksFound++
 
-		parts := strings.Split(strings.Trim(link, "/"), "-")
+		// Strip query params first
+		linkPath := strings.Split(link, "?")[0]
+		
+		parts := strings.Split(strings.Trim(linkPath, "/"), "-")
 		if len(parts) == 0 {
 			return
 		}
 
-		rawID := parts[len(parts)-1]
-		idParts := strings.Split(rawID, "?")
-		id := idParts[0]
+		id := parts[len(parts)-1]
 
-		if strings.Contains(id, "tap_index") || len(id) < 5 {
+		if len(id) < 5 {
 			return
 		}
 
@@ -140,6 +145,7 @@ func (s *Scraper) Fetch(ctx context.Context, brand string) ([]Listing, error) {
 
 	s.logger.Info("fetched listings",
 		slog.String("brand", brand),
+		slog.Int("links_found", linksFound),
 		slog.Int("count", len(listings)),
 	)
 
