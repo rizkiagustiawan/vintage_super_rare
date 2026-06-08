@@ -7,7 +7,7 @@ import (
 
 func TestScraper_IsBlacklisted(t *testing.T) {
 	logger := slog.Default()
-	s := New(nil, logger, []string{"repro", "bootleg", "fake"}, 0)
+	s := New(logger, []string{"repro", "bootleg", "fake"})
 
 	tests := []struct {
 		title string

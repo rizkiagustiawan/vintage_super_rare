@@ -3,12 +3,13 @@ package scraper
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/chromedp/chromedp"
 )
 
 type Listing struct {
@@ -22,70 +23,49 @@ type Listing struct {
 }
 
 type Scraper struct {
-	allocCtx    context.Context
-	logger      *slog.Logger
-	blacklist   []string
-	pageTimeout time.Duration
+	httpClient *http.Client
+	logger     *slog.Logger
+	blacklist  []string
 }
 
-func New(allocCtx context.Context, logger *slog.Logger, blacklist []string, pageTimeout time.Duration) *Scraper {
+func New(logger *slog.Logger, blacklist []string) *Scraper {
 	return &Scraper{
-		allocCtx:    allocCtx,
-		logger:      logger,
-		blacklist:   blacklist,
-		pageTimeout: pageTimeout,
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+		},
+		logger:    logger,
+		blacklist: blacklist,
 	}
 }
 
 func (s *Scraper) Fetch(ctx context.Context, brand string) ([]Listing, error) {
-	var html string
 	url := fmt.Sprintf("https://id.carousell.com/search/%s/?sort_by=3", brand)
 
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
-	}
-
-	tabCtx, tabCancel := chromedp.NewContext(s.allocCtx)
-	defer tabCancel()
-
-	var cancel context.CancelFunc
-	if s.pageTimeout > 0 {
-		tabCtx, cancel = context.WithTimeout(tabCtx, s.pageTimeout)
-		defer cancel()
-	}
-
-	go func() {
-		select {
-		case <-ctx.Done():
-			tabCancel()
-		case <-tabCtx.Done():
-		}
-	}()
-
-	err := chromedp.Run(tabCtx,
-		chromedp.Navigate(url),
-		chromedp.Sleep(2*time.Second),
-		chromedp.ActionFunc(func(ctx context.Context) error {
-			for i := 0; i < 3; i++ {
-				if err := chromedp.Evaluate(`window.scrollTo(0, document.body.scrollHeight)`, nil).Do(ctx); err != nil {
-					return err
-				}
-				chromedp.Sleep(500 * time.Millisecond).Do(ctx)
-			}
-			return nil
-		}),
-		chromedp.OuterHTML("html", &html),
-	)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.5")
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
 		return nil, fmt.Errorf("fetch page: %w", err)
 	}
+	defer resp.Body.Close()
 
-	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(string(body)))
 	if err != nil {
 		return nil, fmt.Errorf("parse html: %w", err)
 	}
@@ -142,8 +122,8 @@ func (s *Scraper) Fetch(ctx context.Context, brand string) ([]Listing, error) {
 				ID:     id,
 				Title:  title,
 				Price:  price,
-				Seller: "Unknown", // TODO: extract from HTML when markup is understood
-				Time:   "Recent",  // TODO: extract from HTML when markup is understood
+				Seller: "Unknown",
+				Time:   "Recent",
 				URL:    "https://id.carousell.com" + link,
 				Brand:  brand,
 			})
