@@ -7,7 +7,11 @@ import (
 
 func TestScraper_IsBlacklisted(t *testing.T) {
 	logger := slog.Default()
-	s := New(logger, []string{"repro", "bootleg", "fake"})
+	s, err := New(logger, []string{"repro", "bootleg", "fake"})
+	if err != nil {
+		t.Fatalf("failed to create scraper: %v", err)
+	}
+	defer s.Close()
 
 	tests := []struct {
 		title string

@@ -3,13 +3,12 @@ package scraper
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
 	"strings"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/sardanioss/httpcloak/client"
 )
 
 type Listing struct {
@@ -23,49 +22,58 @@ type Listing struct {
 }
 
 type Scraper struct {
-	httpClient *http.Client
+	httpClient *client.Client
 	logger     *slog.Logger
 	blacklist  []string
 }
 
-func New(logger *slog.Logger, blacklist []string) *Scraper {
+func New(logger *slog.Logger, blacklist []string) (*Scraper, error) {
+	c := client.NewClient("chrome-latest",
+		client.WithTimeout(30*time.Second),
+		client.WithRetry(2),
+		client.WithRetryConfig(
+			3,                    // Max retries
+			500*time.Millisecond, // Min backoff
+			5*time.Second,        // Max backoff
+			[]int{429, 503},      // Status codes to retry
+		),
+	)
+
 	return &Scraper{
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
-		logger:    logger,
-		blacklist: blacklist,
+		httpClient: c,
+		logger:     logger,
+		blacklist:  blacklist,
+	}, nil
+}
+
+func (s *Scraper) Close() {
+	if s.httpClient != nil {
+		s.httpClient.Close()
 	}
 }
 
 func (s *Scraper) Fetch(ctx context.Context, brand string) ([]Listing, error) {
 	url := fmt.Sprintf("https://id.carousell.com/search/%s/?sort_by=3", brand)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.5")
-
-	resp, err := s.httpClient.Do(req)
+	resp, err := s.httpClient.Get(ctx, url, map[string][]string{
+		"Accept":          {"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"},
+		"Accept-Language": {"en-US,en;q=0.5"},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("fetch page: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if !resp.IsSuccess() {
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := resp.Text()
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 
-	doc, err := goquery.NewDocumentFromReader(strings.NewReader(string(body)))
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("parse html: %w", err)
 	}

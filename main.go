@@ -48,7 +48,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	sc := scraper.New(logger, cfg.Blacklist)
+	sc, err := scraper.New(logger, cfg.Blacklist)
+	if err != nil {
+		logger.Error("failed to create scraper", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+	defer sc.Close()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
