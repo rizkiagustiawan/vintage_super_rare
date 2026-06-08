@@ -17,7 +17,6 @@ import (
 	"carousell-bot/telegram"
 
 	"github.com/cenkalti/backoff/v4"
-	"github.com/chromedp/chromedp"
 )
 
 func main() {
@@ -49,17 +48,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	opts := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.Flag("headless", true),
-		chromedp.Flag("disable-gpu", true),
-		chromedp.Flag("no-sandbox", true),
-		chromedp.Flag("disable-dev-shm-usage", true),
-		chromedp.UserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
-	)
-	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), opts...)
-	defer allocCancel()
-
-	sc := scraper.New(allocCtx, logger, cfg.Blacklist, cfg.PageTimeout)
+	sc := scraper.New(logger, cfg.Blacklist)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

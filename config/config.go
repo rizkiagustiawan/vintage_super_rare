@@ -17,7 +17,6 @@ type Config struct {
 	Workers        int           `env:"WORKERS,default=5"`
 	MinDelay       time.Duration `env:"MIN_DELAY,default=2s"`
 	CycleDelay     time.Duration `env:"CYCLE_DELAY,default=15s"`
-	PageTimeout    time.Duration `env:"PAGE_TIMEOUT,default=45s"`
 	Blacklist      []string      `env:"BLACKLIST,default=repro,bootleg,kaos,custom,premium,fake"`
 }
 

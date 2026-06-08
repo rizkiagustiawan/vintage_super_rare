@@ -10,7 +10,7 @@ func unsetAll(t *testing.T) {
 	t.Helper()
 	vars := []string{
 		"TELEGRAM_TOKEN", "TELEGRAM_CHAT_ID", "WORKERS", "MIN_DELAY",
-		"CYCLE_DELAY", "PAGE_TIMEOUT", "BRAND_FILE", "DATABASE_FILE", "BLACKLIST",
+		"CYCLE_DELAY", "BRAND_FILE", "DATABASE_FILE", "BLACKLIST",
 	}
 	for _, v := range vars {
 		old, wasSet := os.LookupEnv(v)
@@ -42,9 +42,6 @@ func TestLoad_DefaultValues(t *testing.T) {
 	}
 	if cfg.CycleDelay != 15*time.Second {
 		t.Errorf("CycleDelay = %v, want 15s", cfg.CycleDelay)
-	}
-	if cfg.PageTimeout != 45*time.Second {
-		t.Errorf("PageTimeout = %v, want 45s", cfg.PageTimeout)
 	}
 	if cfg.BrandFile != "brand_list.txt" {
 		t.Errorf("BrandFile = %s, want brand_list.txt", cfg.BrandFile)
