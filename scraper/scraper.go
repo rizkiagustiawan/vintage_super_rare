@@ -41,14 +41,28 @@ func (s *Scraper) Fetch(ctx context.Context, brand string) ([]Listing, error) {
 	var html string
 	url := fmt.Sprintf("https://id.carousell.com/search/%s/?sort_by=3", brand)
 
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
 	tabCtx, tabCancel := chromedp.NewContext(s.allocCtx)
+	defer tabCancel()
 
 	var cancel context.CancelFunc
 	if s.pageTimeout > 0 {
 		tabCtx, cancel = context.WithTimeout(tabCtx, s.pageTimeout)
 		defer cancel()
 	}
-	defer tabCancel()
+
+	go func() {
+		select {
+		case <-ctx.Done():
+			tabCancel()
+		case <-tabCtx.Done():
+		}
+	}()
 
 	err := chromedp.Run(tabCtx,
 		chromedp.Navigate(url),
@@ -65,6 +79,9 @@ func (s *Scraper) Fetch(ctx context.Context, brand string) ([]Listing, error) {
 		chromedp.OuterHTML("html", &html),
 	)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, fmt.Errorf("fetch page: %w", err)
 	}
 
