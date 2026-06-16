@@ -8,6 +8,7 @@ Bot otomatis profesional untuk memburu barang-barang "Super Rare" (vintage/archi
 - **VPS Optimized**: Manajemen memori yang efisien (membuka/menutup browser per brand) dan anti-ban delay.
 - **Bypass Cloudflare**: Menggunakan headless browser engine terbaru untuk menembus proteksi bot.
 - **Telegram Alert Instan**: Notifikasi lengkap dengan Nama Brand, Harga, Penjual, dan Link.
+- **CSV Export**: Otomatis menyimpan hasil listing baru ke file CSV (`results.csv`) untuk analisis/offline review.
 
 ## 🛠️ Prasyarat
 - **Go** (v1.19+)
@@ -27,6 +28,7 @@ Demi keamanan, bot tidak lagi menyimpan token di dalam kode. Set variabel beriku
 ```bash
 export TELEGRAM_TOKEN="your_bot_token_here"
 export TELEGRAM_CHAT_ID="your_chat_id_here"
+export CSV_FILE="results.csv"
 ```
 
 ## 🏃 Cara Menjalankan
@@ -38,6 +40,7 @@ go run main.go
 - `main.go`: Mesin utama bot.
 - `brand_list.txt`: Daftar brand yang ingin dipantau.
 - `seen_db.json`: Database ID barang (otomatis dibuat oleh bot).
+- `results.csv`: Export listing baru ke CSV (otomatis dibuat oleh bot).
 - `.gitignore`: Memastikan file database dan binary tidak ter-push ke Git.
 
 ## ⚠️ Disclaimer

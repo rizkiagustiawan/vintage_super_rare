@@ -7,6 +7,9 @@ bot
 # Database
 seen_db.json
 
+# Export
+results.csv
+
 # Go
 *.exe
 *.test

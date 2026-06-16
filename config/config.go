@@ -14,6 +14,7 @@ type Config struct {
 	TelegramChatID int64         `env:"TELEGRAM_CHAT_ID,required"`
 	BrandFile      string        `env:"BRAND_FILE,default=brand_list.txt"`
 	DatabaseFile   string        `env:"DATABASE_FILE,default=seen_db.json"`
+	CSVFile        string        `env:"CSV_FILE,default=results.csv"`
 	Workers        int           `env:"WORKERS,default=5"`
 	MinDelay       time.Duration `env:"MIN_DELAY,default=2s"`
 	CycleDelay     time.Duration `env:"CYCLE_DELAY,default=15s"`

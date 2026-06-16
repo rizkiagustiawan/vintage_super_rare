@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/csv"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -79,7 +80,7 @@ func main() {
 
 func runCycle(ctx context.Context, sc *scraper.Scraper, db *database.Database, tg *telegram.Bot, brands []string, cfg *config.Config, logger *slog.Logger) {
 	brandChan := make(chan string, len(brands))
-	resultChan := make(chan int, len(brands))
+	resultChan := make(chan scraper.Listing, len(brands)*10)
 
 	var needsSave atomic.Bool
 	var wg sync.WaitGroup
@@ -105,15 +106,23 @@ func runCycle(ctx context.Context, sc *scraper.Scraper, db *database.Database, t
 		}
 	}
 
-	totalNew := 0
-	for n := range resultChan {
-		totalNew += n
+	var newItems []scraper.Listing
+	for l := range resultChan {
+		newItems = append(newItems, l)
 	}
 
-	logger.Info("cycle complete", slog.Int("new_items", totalNew))
+	if len(newItems) > 0 {
+		if err := writeCSV(cfg.CSVFile, newItems); err != nil {
+			logger.Error("failed to write csv", slog.String("error", err.Error()))
+		} else {
+			logger.Info("csv updated", slog.Int("new_items", len(newItems)), slog.String("file", cfg.CSVFile))
+		}
+	}
+
+	logger.Info("cycle complete", slog.Int("new_items", len(newItems)))
 }
 
-func worker(ctx context.Context, id int, sc *scraper.Scraper, db *database.Database, tg *telegram.Bot, brands <-chan string, results chan<- int, needsSave *atomic.Bool, cfg *config.Config, logger *slog.Logger) {
+func worker(ctx context.Context, id int, sc *scraper.Scraper, db *database.Database, tg *telegram.Bot, brands <-chan string, results chan<- scraper.Listing, needsSave *atomic.Bool, cfg *config.Config, logger *slog.Logger) {
 	for brand := range brands {
 		logger.Info("scanning brand", slog.Int("worker", id), slog.String("brand", brand))
 
@@ -134,7 +143,6 @@ func worker(ctx context.Context, id int, sc *scraper.Scraper, db *database.Datab
 				slog.String("brand", brand),
 				slog.String("error", err.Error()),
 			)
-			results <- 0
 			continue
 		}
 
@@ -152,6 +160,8 @@ func worker(ctx context.Context, id int, sc *scraper.Scraper, db *database.Datab
 					)
 				}
 				db.MarkSeen(l.ID)
+				l.Time = time.Now().Format(time.RFC3339)
+				results <- l
 				newFound++
 			}
 		}
@@ -166,7 +176,6 @@ func worker(ctx context.Context, id int, sc *scraper.Scraper, db *database.Datab
 			slog.Int("new", newFound),
 		)
 
-		results <- newFound
 		time.Sleep(cfg.MinDelay)
 	}
 }
@@ -190,4 +199,36 @@ func loadBrands(filePath string) ([]string, error) {
 	}
 
 	return brands, nil
+}
+
+func writeCSV(filePath string, items []scraper.Listing) error {
+	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	stat, err := file.Stat()
+	if err != nil {
+		return err
+	}
+
+	writer := csv.NewWriter(file)
+	defer writer.Flush()
+
+	if stat.Size() == 0 {
+		header := []string{"Brand", "Title", "Price", "URL", "Timestamp"}
+		if err := writer.Write(header); err != nil {
+			return err
+		}
+	}
+
+	for _, item := range items {
+		record := []string{item.Brand, item.Title, item.Price, item.URL, item.Time}
+		if err := writer.Write(record); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
